@@ -8,6 +8,7 @@ from typing import Iterable
 
 import aiohttp
 from PIL import Image
+from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
 
 MAX_CONCURRENT = 64
@@ -65,14 +66,17 @@ async def glue_tiles(tiles_dir: str, out_dir: str, game_version: str, map_type: 
 
     atlas = Image.new("RGBA", (canvas_width, canvas_height))
 
-    for x in range(grid_size):
-        for y in range(grid_size):
-            tile_path = os.path.join(tiles_dir, str(x), f"{y}.webp")
-            tile = Image.open(tile_path).convert("RGBA")
-            atlas.paste(tile, (x * 256, y * 256), tile)
+    total_tiles = grid_size * grid_size
+    with tqdm(total=total_tiles, desc=f"Glue {game_version}/{map_type}/{resolution}", unit="tile") as pbar:
+        for x in range(grid_size):
+            for y in range(grid_size):
+                tile_path = os.path.join(tiles_dir, str(x), f"{y}.webp")
+                tile = Image.open(tile_path).convert("RGBA")
+                atlas.paste(tile, (x * 256, y * 256), tile)
+                pbar.update(1)
 
     atlas.save(atlas_path, format="WEBP")
-    print(f"Saved atlas: {atlas_path}")
+    print(f"Saved map: {atlas_path}")
 
 
 async def download_all_tiles(
@@ -103,7 +107,7 @@ async def download_all_tiles(
         try:
             await tqdm_asyncio.gather(
                 *tasks,
-                desc=f"{game_version}/{map_type}/{resolution}",
+                desc=f"Download {game_version}/{map_type}/{resolution}",
             )
         except:
             for t in tasks:
