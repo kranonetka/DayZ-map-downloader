@@ -54,12 +54,19 @@ async def download_tile(
                 f.write(data)
 
 
-async def glue_tiles(tiles_dir: str, out_dir: str, game_version: str, map_type: str, resolution: int):
+async def glue_tiles(
+        tiles_dir: str,
+        out_dir: str,
+        game_version: str,
+        map_type: str,
+        resolution: int,
+        image_format: str
+):
     os.makedirs(out_dir, exist_ok=True)
 
     grid_size = 2 ** resolution
 
-    atlas_path = os.path.join(out_dir, f"{map_type}_{game_version}_{grid_size}x{grid_size}.webp")
+    atlas_path = os.path.join(out_dir, f"{map_type}_{game_version}_{grid_size}x{grid_size}.{image_format.lower()}")
 
     canvas_width = grid_size * 256
     canvas_height = grid_size * 256
@@ -75,7 +82,7 @@ async def glue_tiles(tiles_dir: str, out_dir: str, game_version: str, map_type: 
                 atlas.paste(tile, (x * 256, y * 256), tile)
                 pbar.update(1)
 
-    atlas.save(atlas_path, format="WEBP")
+    atlas.save(atlas_path, format=image_format)
     print(f"Saved map: {atlas_path}")
 
 
@@ -83,7 +90,7 @@ async def download_all_tiles(
         game_version: str,
         map_type: str,
         resolution: int,
-        dir: str
+        target_dir: str
 ):
     grid_size = 2 ** resolution
     sem = asyncio.Semaphore(MAX_CONCURRENT)
@@ -94,7 +101,7 @@ async def download_all_tiles(
         tasks = [
             asyncio.create_task(
                 download_tile(
-                    sem, dir, session,
+                    sem, target_dir, session,
                     game_version, map_type, resolution,
                     x, y
                 ),
@@ -161,6 +168,14 @@ def parse_args():
         help="Dir to store downloaded glued tiles",
     )
 
+    parser.add_argument(
+        "--out-format",
+        type=str,
+        default="WEBP",
+        choices=["WEBP", "PNG", "JPG"],
+        help="Dir to store downloaded glued tiles",
+    )
+
     return parser.parse_args()
 
 
@@ -185,7 +200,7 @@ async def main():
             game_version=args.version,
             map_type=args.map_type,
             resolution=res,
-            dir=args.tmp_dir
+            target_dir=args.tmp_dir
         )
 
         current_map_tiles_dir = os.path.join(
@@ -193,7 +208,7 @@ async def main():
             f'{args.version}_{args.map_type}_{res}x{res}'
         )
 
-        await glue_tiles(current_map_tiles_dir, args.out_dir, args.version, args.map_type, res)
+        await glue_tiles(current_map_tiles_dir, args.out_dir, args.version, args.map_type, res, args.out_format)
 
         shutil.rmtree(args.tmp_dir)
 
