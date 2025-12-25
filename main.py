@@ -3,8 +3,11 @@
 import argparse
 import asyncio
 import os
+import shutil
+from typing import Iterable
 
 import aiohttp
+from PIL import Image
 from tqdm.asyncio import tqdm_asyncio
 
 MAX_CONCURRENT = 64
@@ -13,6 +16,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 async def download_tile(
         sem: asyncio.Semaphore,
+        target_dir: str,
         session: aiohttp.ClientSession,
         game_version: str,
         map_type: str,
@@ -20,7 +24,7 @@ async def download_tile(
         x: int,
         y: int,
 ):
-    out_dir = f"static/images/map/tiles/{game_version}_{map_type}_{resolution}"
+    out_dir = f"{target_dir}/{game_version}_{map_type}_{resolution}x{resolution}"
     os.makedirs(out_dir, exist_ok=True)
 
     async with sem:
@@ -49,10 +53,33 @@ async def download_tile(
                 f.write(data)
 
 
+async def glue_tiles(tiles_dir: str, out_dir: str, game_version: str, map_type: str, resolution: int):
+    os.makedirs(out_dir, exist_ok=True)
+
+    grid_size = 2 ** resolution
+
+    atlas_path = os.path.join(out_dir, f"{map_type}_{game_version}_{grid_size}x{grid_size}.webp")
+
+    canvas_width = grid_size * 256
+    canvas_height = grid_size * 256
+
+    atlas = Image.new("RGBA", (canvas_width, canvas_height))
+
+    for x in range(grid_size):
+        for y in range(grid_size):
+            tile_path = os.path.join(tiles_dir, str(x), f"{y}.webp")
+            tile = Image.open(tile_path).convert("RGBA")
+            atlas.paste(tile, (x * 256, y * 256), tile)
+
+    atlas.save(atlas_path, format="WEBP")
+    print(f"Saved atlas: {atlas_path}")
+
+
 async def download_all_tiles(
         game_version: str,
         map_type: str,
         resolution: int,
+        dir: str
 ):
     grid_size = 2 ** resolution
     sem = asyncio.Semaphore(MAX_CONCURRENT)
@@ -63,7 +90,7 @@ async def download_all_tiles(
         tasks = [
             asyncio.create_task(
                 download_tile(
-                    sem, session,
+                    sem, dir, session,
                     game_version, map_type, resolution,
                     x, y
                 ),
@@ -116,10 +143,24 @@ def parse_args():
         help="Resolution range, e.g. 5 8",
     )
 
+    parser.add_argument(
+        "--tmp-dir",
+        type=str,
+        default="tmp",
+        help="Tmp dir to download tiles from",
+    )
+
+    parser.add_argument(
+        "--out-dir",
+        type=str,
+        default="maps",
+        help="Dir to store downloaded glued tiles",
+    )
+
     return parser.parse_args()
 
 
-def main():
+async def main():
     args = parse_args()
 
     if not args.resolution and not args.resolution_range:
@@ -127,23 +168,31 @@ def main():
             "❌ Нужно указать --resolution или --resolution-range"
         )
 
-    resolutions: list[int]
+    resolutions: Iterable[int]
 
     if args.resolution_range:
         start, end = args.resolution_range
-        resolutions = list(range(start, end + 1))
+        resolutions = range(start, end + 1)
     else:
         resolutions = [args.resolution]
 
     for res in resolutions:
-        asyncio.run(
-            download_all_tiles(
-                game_version=args.version,
-                map_type=args.map_type,
-                resolution=res,
-            )
+        await download_all_tiles(
+            game_version=args.version,
+            map_type=args.map_type,
+            resolution=res,
+            dir=args.tmp_dir
         )
+
+        current_map_tiles_dir = os.path.join(
+            args.tmp_dir,
+            f'{args.version}_{args.map_type}_{res}x{res}'
+        )
+
+        await glue_tiles(current_map_tiles_dir, args.out_dir, args.version, args.map_type, res)
+
+        shutil.rmtree(args.tmp_dir)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
